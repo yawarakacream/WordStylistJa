@@ -1,17 +1,77 @@
+import os
+import copy
+import argparse
+import json
+import random
+
+from distutils.util import strtobool
+
+import numpy as np
+
 import torch
 import torch.nn as nn
-import argparse
-import copy
 from torch import optim
+
+import torchvision
+import cv2
+
+from PIL import Image
+from diffusers import AutoencoderKL
+
 from train import setup_logging, Diffusion, EMA
 from unet import UNetModel
-from diffusers import AutoencoderKL
-import os
-import random
-import torchvision
-from PIL import Image
-import cv2
-import numpy as np
+
+
+MAX_CHARS = 1
+OUTPUT_MAX_LEN = MAX_CHARS # + 2  # <GO>+groundtruth+<END>
+
+hiraganas = [
+    "あ", "い", "う", "え", "お",
+    "か", "き", "く", "け", "こ",
+    "さ", "し", "す", "せ", "そ",
+    "た", "ち", "つ", "て", "と",
+    "な", "に", "ぬ", "ね", "の",
+    "は", "ひ", "ふ", "へ", "ほ",
+    "ま", "み", "む", "め", "も",
+    "や", "ぃ", "ゆ", "ぇ", "よ",
+    "ら", "り", "る", "れ", "ろ",
+    "わ", "ゐ", "ぅ", "ゑ", "を",
+    "ん",
+]
+
+katakanas = [
+    "ア", "イ", "ウ", "エ", "オ",
+    "カ", "キ", "ク", "ケ", "コ",
+    "サ", "シ", "ス", "セ", "ソ",
+    "タ", "チ", "ツ", "テ", "ト",
+    "ナ", "ニ", "ヌ", "ネ", "ノ",
+    "ハ", "ヒ", "フ", "ヘ", "ホ",
+    "マ", "ミ", "ム", "メ", "モ",
+    "ヤ", "ィ", "ユ", "ェ", "ヨ",
+    "ラ", "リ", "ル", "レ", "ロ",
+    "ワ", "ヰ", "ゥ", "ヱ", "ヲ",
+    "ン",
+]
+
+char_classes = hiraganas + katakanas
+n_char_classes = len(char_classes)
+
+char2index = {c: n for n, c in enumerate(char_classes)}
+index2char = {c: n for n, c in enumerate(char_classes)}
+
+char2code = lambda c: format(ord(c), '#06x')
+code2char = lambda c: chr(int(c, base=16))
+
+tok = False
+if not tok:
+    tokens = {"PAD_TOKEN": n_char_classes}
+else:
+    tokens = {"GO_TOKEN": n_char_classes, "END_TOKEN": n_char_classes + 1, "PAD_TOKEN": n_char_classes + 2}
+del tok
+n_tokens = len(tokens.keys())
+
+vocab_size = n_char_classes + n_tokens
+
 
 def crop_whitespace(img):
     img_gray = img.convert("L")
@@ -21,6 +81,7 @@ def crop_whitespace(img):
     x, y, w, h = cv2.boundingRect(coords)
     rect = img.crop((x, y, x + w, y + h))
     return np.array(rect)
+
 
 def save_images(images, path, args, **kwargs):
     grid = torchvision.utils.make_grid(images, **kwargs)
@@ -32,6 +93,7 @@ def save_images(images, path, args, **kwargs):
         
     im.save(path)
     return im
+
 
 def save_single_images(images, path, args, **kwargs):
     #grid = torchvision.utils.make_grid(images, **kwargs)
@@ -49,53 +111,63 @@ def save_single_images(images, path, args, **kwargs):
     im.save(path)
     return im
 
+
 def main():
     '''Main function'''
+    
+    path_str_type = lambda x: os.path.expanduser(str(x))
+    
     parser = argparse.ArgumentParser()
+    
     parser.add_argument('--device', type=str, default='cuda:0') 
-    parser.add_argument('--img_size', type=int, default=(64, 256)) 
-    parser.add_argument('--save_path', type=str, default='/path/to/save/generated/images')
+    parser.add_argument('--img_size', type=int, default=(64, 64)) 
+    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path etl4,etl5,epochs=1000')
     parser.add_argument('--channels', type=int, default=4)
     parser.add_argument('--emb_dim', type=int, default=320)
     parser.add_argument('--num_heads', type=int, default=4)
     parser.add_argument('--num_res_blocks', type=int, default=1)
-    parser.add_argument('--latent', type=bool, default=True)
-    parser.add_argument('--single_image', type=bool, default=True)
-    parser.add_argument('--interpolation', type=bool, default=False)
+    parser.add_argument('--latent', type=strtobool, default=True)
+    parser.add_argument('--writers', type=str, nargs="*", default=["ETL4_5001", "ETL4_5002", "ETL5_6001", "ETL5_6002"])
+    parser.add_argument('--interpolation', type=strtobool, default=False)
     parser.add_argument('--mix_rate', type=int, default=1)
-    parser.add_argument('--stable_dif_path', type=str, default='./stable-diffusion-v1-5')
-    parser.add_argument('--models_path', type=str, default='/path/to/trained/models')
-    parser.add_argument('--words', type=list, default=['hello', 'MOVE'])
+    parser.add_argument('--stable_dif_path', type=path_str_type, default='~/datadisk/stable-diffusion-v1-5')
+    parser.add_argument('--models_path', type=path_str_type, default='./datadisk/save_path etl4,etl5 epochs=1000')
+    parser.add_argument('--words', type=list, default=['あ', 'ア'])
     
     args = parser.parse_args()
-    
+
     setup_logging(args)
-    if args.single_image == True:
-        s=[random.randint(0, 339)] #style index for random style or pick a value from 0 to 339 for a specific style
-        
-        labels = torch.tensor(s).long().to(args.device)
-        print('style', labels)
-    else:
-        print('16 classes')
-        labels = torch.arange(16).long().to(args.device)
-    words = args.words #produce, greater, music, queer, clearly, edifice, freedom, MOVE, life, sweet, several, months
     
-    print('words', words)
+    with open(os.path.join(args.save_path, "writer2idx.json")) as f:
+        writer2idx = json.load(f)
+    num_classes = len(writer2idx)
+    
+    single_image = len(args.writers) == 1
+    labels = torch.LongTensor([writer2idx[w] for w in args.writers]).to(args.device)
+    
+    print('words', args.words)
     diffusion = Diffusion(img_size=args.img_size, args=args)
     
-    num_classes = 339 
-    vocab_size = 53 
     if args.latent == True:
-        unet = UNetModel(image_size = args.img_size, in_channels=4, model_channels=args.emb_dim, out_channels=4, num_res_blocks=1, attention_resolutions=(1, 1), channel_mult=(1, 1), num_heads=args.num_heads, num_classes=num_classes, context_dim=args.emb_dim, vocab_size=vocab_size, args=args).to(args.device)
+        unet = UNetModel(
+            image_size = args.img_size, in_channels=4, model_channels=args.emb_dim, out_channels=4,
+            num_res_blocks=1, attention_resolutions=(1, 1), channel_mult=(1, 1),
+            num_heads=args.num_heads, num_classes=num_classes, context_dim=args.emb_dim, vocab_size=vocab_size,
+            args=args
+        ).to(args.device)
     else:
-        unet = UNetModel(image_size = args.img_size, in_channels=3, model_channels=128, out_channels=3, num_res_blocks=1, attention_resolutions=(1, 2), num_heads=1, num_classes=num_classes, context_dim=128, vocab_size=vocab_size).to(args.device)
-    #unet = nn.DataParallel(unet, device_ids = [0,1,2,3,4]) #,5,6,7])
+        unet = UNetModel(
+            image_size = args.img_size, in_channels=3, model_channels=128, out_channels=3,
+            num_res_blocks=1, attention_resolutions=(1, 2),
+            num_heads=1, num_classes=num_classes, context_dim=128, vocab_size=vocab_size
+        ).to(args.device)
+    # unet = nn.DataParallel(unet, device_ids = [0,1,2,3,4]) #,5,6,7])
+    
     optimizer = optim.AdamW(unet.parameters(), lr=0.0001)
     unet.load_state_dict(torch.load(f'{args.models_path}/models/ckpt.pt'))
     optimizer.load_state_dict(torch.load(f'{args.models_path}/models/optim.pt'))
     
     unet.eval()
-    
     
     ema = EMA(0.995)
     ema_model = copy.deepcopy(unet).eval().requires_grad_(False)
@@ -103,7 +175,7 @@ def main():
     #ema_model = ema_model.to(args.device)
     ema_model.eval()
     
-    if args.latent==True:
+    if args.latent == True:
         print('VAE is true')
         vae = AutoencoderKL.from_pretrained(args.stable_dif_path, subfolder="vae")
         vae = vae.to(args.device)
@@ -113,19 +185,38 @@ def main():
     else:
         vae = None
 
-    
-    for x_text in words:
-        if not args.single_image:
-            ema_sampled_images = diffusion.sample(ema_model, vae, n=len(labels), x_text=x_text, labels=labels, args=args)
-            sampled_ema = save_images(ema_sampled_images, os.path.join(args.save_path, 'images', f"{x_text}.jpg"), args)
+    for x_text in args.words:
+        if not single_image:
+            ema_sampled_images = diffusion.sampling(
+                ema_model, vae, n=len(labels), x_text=x_text, labels=labels, args=args
+            )
+            sampled_ema = save_images(
+                ema_sampled_images,
+                os.path.join(args.save_path, 'generated', f"{char2code(x_text)}_writers={','.join(args.writers)}.jpg"),
+                args
+            )
         else:
             if args.interpolation == True:
-                ema_sampled_images = diffusion.sampling(ema_model, vae, n=len(labels), x_text=x_text, labels=labels, args=args)
-                sampled_ema = save_single_images(ema_sampled_images, os.path.join(args.save_path, 'images', f"{x_text}_{args.mix_rate}.png"), args)
+                raise Exception("not implemented yet: よくわからない")
+                
+                ema_sampled_images = diffusion.sampling(
+                    ema_model, vae, n=len(labels), x_text=x_text, labels=labels, args=args
+                )
+                sampled_ema = save_single_images(
+                    ema_sampled_images,
+                    os.path.join(args.save_path, 'generated', f"{char2code(x_text)}_{args.mix_rate}.png"),
+                    args
+                )
             else:
-                #for i in range(10):
-                ema_sampled_images = diffusion.sampling(ema_model, vae, n=len(labels), x_text=x_text, labels=labels, args=args)
-                sampled_ema = save_single_images(ema_sampled_images, os.path.join(args.save_path, 'images', f"{x_text}_{s[0]}.png"), args)
-    
+                ema_sampled_images = diffusion.sampling(
+                    ema_model, vae, n=len(labels), x_text=x_text, labels=labels, args=args
+                )
+                sampled_ema = save_single_images(
+                    ema_sampled_images,
+                    os.path.join(args.save_path, 'generated', f"{char2code(x_text)}_writer={args.writers[0]}.png"),
+                    args
+                )
+
+
 if __name__ == "__main__":
     main()

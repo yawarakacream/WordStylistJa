@@ -1,24 +1,72 @@
 import os
-import torch
-import torch.nn as nn
-import numpy as np
-from PIL import Image
-from torch.utils.data import DataLoader, Dataset
-import torchvision
-from tqdm import tqdm
-from torch import optim
 import copy
 import argparse
 import json
-from diffusers import AutoencoderKL
-from unet import UNetModel
-import wandb
 
-MAX_CHARS = 10
-OUTPUT_MAX_LEN = MAX_CHARS #+ 2  # <GO>+groundtruth+<END>
-c_classes = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-cdict = {c:i for i,c in enumerate(c_classes)}
-icdict = {i:c for i,c in enumerate(c_classes)}
+import numpy as np
+
+import torch
+import torch.nn as nn
+from torch import optim
+from torch.utils.data import DataLoader, Dataset
+
+import torchvision
+
+from PIL import Image
+from tqdm import tqdm
+from diffusers import AutoencoderKL
+
+from unet import UNetModel
+
+MAX_CHARS = 1
+OUTPUT_MAX_LEN = MAX_CHARS # + 2  # <GO>+groundtruth+<END>
+
+hiraganas = [
+    "あ", "い", "う", "え", "お",
+    "か", "き", "く", "け", "こ",
+    "さ", "し", "す", "せ", "そ",
+    "た", "ち", "つ", "て", "と",
+    "な", "に", "ぬ", "ね", "の",
+    "は", "ひ", "ふ", "へ", "ほ",
+    "ま", "み", "む", "め", "も",
+    "や", "ぃ", "ゆ", "ぇ", "よ",
+    "ら", "り", "る", "れ", "ろ",
+    "わ", "ゐ", "ぅ", "ゑ", "を",
+    "ん",
+]
+
+katakanas = [
+    "ア", "イ", "ウ", "エ", "オ",
+    "カ", "キ", "ク", "ケ", "コ",
+    "サ", "シ", "ス", "セ", "ソ",
+    "タ", "チ", "ツ", "テ", "ト",
+    "ナ", "ニ", "ヌ", "ネ", "ノ",
+    "ハ", "ヒ", "フ", "ヘ", "ホ",
+    "マ", "ミ", "ム", "メ", "モ",
+    "ヤ", "ィ", "ユ", "ェ", "ヨ",
+    "ラ", "リ", "ル", "レ", "ロ",
+    "ワ", "ヰ", "ゥ", "ヱ", "ヲ",
+    "ン",
+]
+
+char_classes = hiraganas + katakanas
+n_char_classes = len(char_classes)
+
+char2index = {c: n for n, c in enumerate(char_classes)}
+index2char = {c: n for n, c in enumerate(char_classes)}
+
+char2code = lambda c: format(ord(c), '#06x')
+code2char = lambda c: chr(int(c, base=16))
+
+tok = False
+if not tok:
+    tokens = {"PAD_TOKEN": n_char_classes}
+else:
+    tokens = {"GO_TOKEN": n_char_classes, "END_TOKEN": n_char_classes + 1, "PAD_TOKEN": n_char_classes + 2}
+del tok
+n_tokens = len(tokens.keys())
+
+vocab_size = n_char_classes + n_tokens
 
 
 def setup_logging(args):
@@ -26,48 +74,19 @@ def setup_logging(args):
     os.makedirs(os.path.join(args.save_path, 'models'), exist_ok=True)
     os.makedirs(os.path.join(args.save_path, 'images'), exist_ok=True)
 
+
 ### Borrowed from GANwriting ###
-def label_padding(labels, num_tokens):
+def label_padding(labels, n_tokens):
     new_label_len = []
-    ll = [letter2index[i] for i in labels]
+    ll = [char2index[i] for i in labels]
     new_label_len.append(len(ll) + 2)
-    ll = np.array(ll) + num_tokens
+    ll = np.array(ll) + n_tokens
     ll = list(ll)
     #ll = [tokens["GO_TOKEN"]] + ll + [tokens["END_TOKEN"]]
     num = OUTPUT_MAX_LEN - len(ll)
     if not num == 0:
         ll.extend([tokens["PAD_TOKEN"]] * num)  # replace PAD_TOKEN
     return ll
-
-
-def labelDictionary():
-    labels = list(c_classes)
-    letter2index = {label: n for n, label in enumerate(labels)}
-    # create json object from dictionary if you want to save writer ids
-    json_dict_l = json.dumps(letter2index)
-    l = open("letter2index.json","w")
-    l.write(json_dict_l)
-    l.close()
-    index2letter = {v: k for k, v in letter2index.items()}
-    json_dict_i = json.dumps(index2letter)
-    l = open("index2letter.json","w")
-    l.write(json_dict_i)
-    l.close()
-    return len(labels), letter2index, index2letter
-
-
-char_classes, letter2index, index2letter = labelDictionary()
-tok = False
-if not tok:
-    tokens = {"PAD_TOKEN": 52}
-else:
-    tokens = {"GO_TOKEN": 52, "END_TOKEN": 53, "PAD_TOKEN": 54}
-num_tokens = len(tokens.keys())
-print('num_tokens', num_tokens)
-
-
-print('num of character classes', char_classes)
-vocab_size = char_classes + num_tokens
 
 
 def save_images(images, path, args, **kwargs):
@@ -80,43 +99,57 @@ def save_images(images, path, args, **kwargs):
     im.save(path)
     return im
 
-class IAMDataset(Dataset):
-    def __init__(self, full_dict, image_path, writer_dict, args, transforms=None):
 
-        self.data_dict = full_dict
-        self.image_path = image_path
-        self.writer_dict = writer_dict
-    
+class EtlcdbDataset(Dataset):
+    def __init__(self, etlcdb_path, etlcdb_names, etlcdb_process_type, transforms):
         self.transforms = transforms
-        self.output_max_len = OUTPUT_MAX_LEN
-        self.max_len = MAX_CHARS
-        self.n_samples_per_class = 16
-        self.indices = list(full_dict.keys())
         
+        self.writer2idx = {} # {writer: writer_idx}
+        self.writer_groups = {} # {etlcdb_names: writer[]}
+        self.items = [] # (image_path, word, writer)
+        
+        writer_idx = 0
+        for etlcdb_name in etlcdb_names:
+            json_path = os.path.join(etlcdb_path, f"{etlcdb_name}.json")
+            with open(json_path) as f:
+                json_data = json.load(f)
             
-    def __len__(self):
-        return len(self.indices)
-            
+            self.writer_groups[etlcdb_name] = []
 
+            for item in json_data:
+                relative_image_path = item["Path"] # ex) ETL4/5001/0x3042.png
+                image_path = os.path.join(etlcdb_path, etlcdb_process_type, relative_image_path)
+                
+                character = item["Character"] # ex) "あ"
+                word = [character]
+                
+                serial_sheet_number = int(item["Serial Sheet Number"]) # ex) 5001
+                writer = f"{etlcdb_name}_{serial_sheet_number}"
+                if writer not in self.writer2idx:
+                    self.writer2idx[writer] = writer_idx
+                    writer_idx += 1
+                    self.writer_groups[etlcdb_name].append(writer)
+                
+                self.items.append((image_path, word, writer))
+        
+    def __len__(self):
+        return len(self.items)
     
     def __getitem__(self, idx):
-        image_name = self.data_dict[self.indices[idx]]['image']
-        label = self.data_dict[self.indices[idx]]['label']
-        wr_id = self.data_dict[self.indices[idx]]['s_id']
-        wr_id = torch.tensor(self.writer_dict[wr_id]).to(torch.int64)
-        img_path = os.path.join(self.image_path, image_name)
+        image_path, word, writer = self.items[idx]
         
-        image = Image.open(img_path).convert('RGB')
+        image = Image.open(image_path).convert("RGB")
         image = self.transforms(image)
         
-        word_embedding = label_padding(label, num_tokens) 
+        word_embedding = label_padding(word, n_tokens) 
         word_embedding = np.array(word_embedding, dtype="int64")
-        word_embedding = torch.from_numpy(word_embedding).long()    
+        word_embedding = torch.from_numpy(word_embedding).long()
         
-        return image, word_embedding, wr_id
+        writer_idx = self.writer2idx[writer]
+        
+        return image, word_embedding, writer_idx
 
-
-
+    
 class EMA:
     '''
     EMA is used to stabilize the training process of diffusion models by 
@@ -150,7 +183,6 @@ class EMA:
         ema_model.load_state_dict(model.state_dict())
 
 
-
 class Diffusion:
     def __init__(self, noise_steps=1000, beta_start=1e-4, beta_end=0.02, img_size=(64, 128), args=None):
         self.noise_steps = noise_steps
@@ -166,27 +198,26 @@ class Diffusion:
 
     def prepare_noise_schedule(self):
         return torch.linspace(self.beta_start, self.beta_end, self.noise_steps)
-
+    
     def noise_images(self, x, t):
         sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])[:, None, None, None]
         sqrt_one_minus_alpha_hat = torch.sqrt(1 - self.alpha_hat[t])[:, None, None, None]
         Ɛ = torch.randn_like(x)
         return sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * Ɛ, Ɛ
-
+    
     def sample_timesteps(self, n):
         return torch.randint(low=1, high=self.noise_steps, size=(n,))
-
 
     def sampling(self, model, vae, n, x_text, labels, args, mix_rate=None, cfg_scale=3):
         model.eval()
         tensor_list = []
-        #if mix_rate is not None:
-         #   print('mix rate', mix_rate)
+        # if mix_rate is not None:
+        #     print('mix rate', mix_rate)
         with torch.no_grad():
             
             words = [x_text]*n
             for word in words:
-                transcript = label_padding(word, num_tokens) #self.transform_text(transcript)
+                transcript = label_padding(word, n_tokens) #self.transform_text(transcript)
                 word_embedding = np.array(transcript, dtype="int64")
                 word_embedding = torch.from_numpy(word_embedding).long()#float()
                 tensor_list.append(word_embedding)
@@ -216,7 +247,7 @@ class Diffusion:
                 x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * noise
                 
         model.train()
-        if args.latent==True:
+        if args.latent == True:
             latents = 1 / 0.18215 * x
             image = vae.decode(latents).sample
 
@@ -225,18 +256,31 @@ class Diffusion:
     
             image = torch.from_numpy(image)
             x = image.permute(0, 3, 1, 2)
+            
         else:
             x = (x.clamp(-1, 1) + 1) / 2
             x = (x * 255).type(torch.uint8)
+            
         return x
 
-def train(diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, num_classes, vocab_size, transforms, args):
+
+def train(
+    diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, tests,
+    num_classes, vocab_size, transforms, args
+):
+    checkpoint_epochs = set(range(0, args.epochs, 10 ** (len(str(args.epochs)) - 2)))
+    checkpoint_epochs.add(args.epochs - 1)
+    
+    losses = []
+    
     model.train()
     
     print('Training started....')
     for epoch in range(args.epochs):
         print('Epoch:', epoch)
         pbar = tqdm(loader)
+        
+        loss_sum = 0
         
         for i, (images, word, s_id) in enumerate(pbar):
             images = images.to(args.device)
@@ -256,119 +300,114 @@ def train(diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, nu
             if np.random.random() < 0.1:
                 labels = None
             
-            predicted_noise = model(x_t, original_images=original_images, timesteps=t, context=text_features, y=s_id, or_images=None)
+            predicted_noise = model(
+                x_t, original_images=original_images, timesteps=t, context=text_features, y=s_id, or_images=None
+            )
             
             loss = mse_loss(noise, predicted_noise)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             ema.step_ema(ema_model, model)
+            
             pbar.set_postfix(MSE=loss.item())
             
-    
-        if epoch % 100 == 0:
-            # if args.img_feat is True:
-            #     n=16
-            #     labels = image_features
-            # else:
-            labels = torch.arange(16).long().to(args.device)
-            n=len(labels)
+            loss_sum += loss.item()
         
+        losses.append(loss_sum / len(pbar))
+        
+        if epoch in checkpoint_epochs:
+            words, writer_idxs = tests
+            labels = torch.LongTensor(writer_idxs).to(args.device)
+            n = len(labels)
             
-            words = ['text', 'getting', 'prop']
-            for x_text in words: 
+            for x_text in words:
                 ema_sampled_images = diffusion.sampling(ema_model, vae, n=n, x_text=x_text, labels=labels, args=args)
-                sampled_ema = save_images(ema_sampled_images, os.path.join(args.save_path, 'images', f"{x_text}_{epoch}.jpg"), args)
-                if args.wandb_log==True:
-                    wandb_sampled_ema= wandb.Image(sampled_ema, caption=f"{x_text}_{epoch}")
-                    wandb.log({f"Sampled images": wandb_sampled_ema})
-            torch.save(model.state_dict(), os.path.join(args.save_path,"models", "ckpt.pt"))
-            torch.save(ema_model.state_dict(), os.path.join(args.save_path,"models", "ema_ckpt.pt"))
-            torch.save(optimizer.state_dict(), os.path.join(args.save_path,"models", "optim.pt"))   
-
+                sampled_ema = save_images(
+                    ema_sampled_images,
+                    os.path.join(args.save_path, 'images', f"{char2code(x_text)}_{epoch}.jpg"),
+                    args
+                )
+            
+            torch.save(model.state_dict(), os.path.join(args.save_path, "models", "ckpt.pt"))
+            torch.save(ema_model.state_dict(), os.path.join(args.save_path, "models", "ema_ckpt.pt"))
+            torch.save(optimizer.state_dict(), os.path.join(args.save_path, "models", "optim.pt"))
+    
+    with open(os.path.join(args.save_path, "loss.log"), "w") as f:
+        f.write("\n".join([str(l) for l in losses]))
+    
 
 def main():
     '''Main function'''
+    path_str_type = lambda x: os.path.expanduser(str(x))
+    
     parser = argparse.ArgumentParser()
+    
     parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--batch_size', type=int, default=224)
-    parser.add_argument('--num_workers', type=int, default=4) 
-    parser.add_argument('--img_size', type=int, default=(64, 256))  
-    parser.add_argument('--dataset', type=str, default='iam', help='iam or other dataset') 
-    parser.add_argument('--iam_path', type=str, default='/path/to/iam/images/', help='path to iam dataset (images 64x256)')
-    parser.add_argument('--gt_train', type=str, default='./gt/gan.iam.tr_va.gt.filter27')
-    #UNET parameters
+    parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--img_size', type=int, default=(64, 64))
+    parser.add_argument('--dataset', type=str, default='etlcdb')
+    
+    parser.add_argument("--etlcdb_path", type=path_str_type, default="~/datadisk/etlcdb_processed")
+    parser.add_argument('--etlcdb_names', type=str, nargs="*", default=["ETL4", "ETL5"])
+    parser.add_argument("--etlcdb_process_type", type=str, default="no_background 64x64")
+    
+    # UNET parameters
     parser.add_argument('--channels', type=int, default=4, help='if latent is True channels should be 4, else 3')  
     parser.add_argument('--emb_dim', type=int, default=320)
     parser.add_argument('--num_heads', type=int, default=4)
     parser.add_argument('--num_res_blocks', type=int, default=1)
-    parser.add_argument('--save_path', type=str, default='./save_path/')
+    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path')
     parser.add_argument('--device', type=str, default='cuda:0') 
-    parser.add_argument('--wandb_log', type=bool, default=False)
     parser.add_argument('--latent', type=bool, default=True)
-    parser.add_argument('--img_feat', type=bool, default=True)
     parser.add_argument('--interpolation', type=bool, default=False)
-    parser.add_argument('--writer_dict', type=str, default='./writers_dict.json')
-    parser.add_argument('--stable_dif_path', type=str, default='./stable-diffusion-v1-5', help='path to stable diffusion')
-    
-    
-    args = parser.parse_args()
-    if args.wandb_log==True:
-        runs = wandb.init(project='DIFFUSION_IAM', name=f'{args.save_path}', config=args)
+    parser.add_argument('--stable_dif_path', type=path_str_type, default="~/datadisk/stable-diffusion-v1-5", help='path to stable diffusion')
 
-        wandb.config.update(args)
+    args = parser.parse_args()
     
-    #create save directories
+    # create save directories
     setup_logging(args)
 
+    print('num of character classes', n_char_classes)
+    print('num of tokens', n_tokens)
     print('character vocabulary size', vocab_size)
     
-    if args.dataset == 'iam':
-        class_dict = {}
-        for i, j in enumerate(os.listdir(f'{args.iam_path}')):
-            class_dict[j] = i
-
+    if args.dataset == "etlcdb":
+        # 謎
         transforms = torchvision.transforms.Compose([
-                        torchvision.transforms.ToTensor(),
-                        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                            ])
-
-        with open(args.gt_train, 'r') as f:
-            train_data = f.readlines()
-            train_data = [i.strip().split(' ') for i in train_data]
-            wr_dict = {}
-            full_dict = {}
-            image_wr_dict = {}
-            img_word_dict = {}
-            wr_index = 0
-            idx = 0
-            for i in train_data:
-                s_id = i[0].split(',')[0]
-                image = i[0].split(',')[1] + '.png'
-                transcription = i[1]
-                #print(s_id)
-                full_dict[idx] = {'image': image, 's_id': s_id, 'label':transcription}
-                image_wr_dict[image] = s_id
-                img_word_dict[image] = transcription
-                idx += 1
-                if s_id not in wr_dict.keys():
-                    wr_dict[s_id] = wr_index
-                    wr_index += 1
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ])
         
-            print('number of train writer styles', len(wr_dict))
-            style_classes=len(wr_dict)
-        
-        # create json object from dictionary if you want to save writer ids
-        json_dict = json.dumps(wr_dict)
-        f = open("writers_dict_train.json","w")
-        f.write(json_dict)
-        f.close()
-        
-        train_ds = IAMDataset(full_dict, args.iam_path, wr_dict, args, transforms=transforms)
-        
+        train_ds = EtlcdbDataset(args.etlcdb_path, args.etlcdb_names, args.etlcdb_process_type, transforms=transforms)
         train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
+        
+        n_style_classes = len(train_ds.writer2idx)
+        
+        with open(os.path.join(args.save_path, "writer2idx.json"), "w") as f:
+            json.dump(train_ds.writer2idx, f, indent=2)
+        
+        tests = [[], []]
+        for etlcdb_name in args.etlcdb_names:
+            if etlcdb_name == "ETL4":
+                tests[0] += ["あ", "く", "さ"]
+            elif etlcdb_name == "ETL5":
+                tests[0] += ["ア", "コ", "ホ"]
+                
+            tests[1] += [train_ds.writer2idx[w] for w in train_ds.writer_groups[etlcdb_name][:16]]
     
-    unet = UNetModel(image_size = args.img_size, in_channels=args.channels, model_channels=args.emb_dim, out_channels=args.channels, num_res_blocks=args.num_res_blocks, attention_resolutions=(1,1), channel_mult=(1, 1), num_heads=args.num_heads, num_classes=style_classes, context_dim=args.emb_dim, vocab_size=vocab_size, args=args, max_seq_len=OUTPUT_MAX_LEN).to(args.device)    
+    else:
+        raise Exception("unknown dataset")
+    
+    print(f"tests: {tests}")
+    
+    unet = UNetModel(
+        image_size=args.img_size, in_channels=args.channels, model_channels=args.emb_dim, out_channels=args.channels,
+        num_res_blocks=args.num_res_blocks, attention_resolutions=(1,1), channel_mult=(1, 1),
+        num_heads=args.num_heads, num_classes=n_style_classes, context_dim=args.emb_dim, vocab_size=vocab_size,
+        args=args, max_seq_len=OUTPUT_MAX_LEN
+    ).to(args.device)
     
     optimizer = optim.AdamW(unet.parameters(), lr=0.0001)
 
@@ -378,21 +417,23 @@ def main():
     ema = EMA(0.995)
     ema_model = copy.deepcopy(unet).eval().requires_grad_(False)
     
-    if args.latent==True:
+    if args.latent:
         print('Latent is true - Working on latent space')
         vae = AutoencoderKL.from_pretrained(args.stable_dif_path, subfolder="vae")
         vae = vae.to(args.device)
         
         # Freeze vae and text_encoder
         vae.requires_grad_(False)
+
     else:
         print('Latent is false - Working on pixel space')
         vae = None
 
-    train(diffusion, unet, ema, ema_model, vae, optimizer, mse_loss, train_loader, style_classes, vocab_size, transforms, args)
+    train(
+        diffusion, unet, ema, ema_model, vae, optimizer, mse_loss,
+        train_loader, tests, n_style_classes, vocab_size, transforms, args
+    )
 
 
 if __name__ == "__main__":
     main()
-  
-  

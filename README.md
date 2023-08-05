@@ -1,3 +1,35 @@
+# WordStylistJa
+
+日本語文字（ひらがな，カタカナ）の学習に対応させる
+
+- `dataset` データセット名
+
+## データセット
+
+### [etlcdb](http://etlcdb.db.aist.go.jp/?lang=ja)
+
+前処理として，`{etlcdb_path}/{etlcdb_preprocess}.json` に etlcdb のバイナリデータを json 化したものを置いておく．  
+抽出した画像も適当に置いておく（ソースコードを見よ）．
+
+- `etlcdb_path` etlcdb のパス
+- `etlcdb_name` etlcdb の名前（複数記述可能）
+- `etlcdb_process_type` 前処理の種類
+
+#### 例
+
+入力
+
+```
+--etlcdb_path ./etlcdb_path --etlcdb_preprocess original --etlcdb_name ETL4
+```
+
+のとき
+
+1. `etlcdb_path/ETL4.json` から画像の相対パスを取得
+2. `etlcdb_path/original/{1. で得た相対パス}` の画像を利用
+
+---
+
 # Official PyTorch Implementation of "WordStylist: Styled Verbatim Handwritten Text Generation with Latent Diffusion Models" - ICDAR 2023
 
 <!-- 
