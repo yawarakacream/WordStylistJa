@@ -12,7 +12,7 @@
 抽出した画像も適当に置いておく（ソースコードを見よ）．
 
 - `etlcdb_path` etlcdb のパス
-- `etlcdb_name` etlcdb の名前（複数記述可能）
+- `etlcdb_names` etlcdb の名前（複数記述可能）
 - `etlcdb_process_type` 前処理の種類
 
 #### 例
@@ -20,7 +20,7 @@
 入力
 
 ```
---etlcdb_path ./etlcdb_path --etlcdb_preprocess original --etlcdb_name ETL4
+--etlcdb_path ./etlcdb_path --etlcdb_process_type original --etlcdb_names ETL4
 ```
 
 のとき
