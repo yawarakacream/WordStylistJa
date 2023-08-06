@@ -121,7 +121,7 @@ def main():
     
     parser.add_argument('--device', type=str, default='cuda:0') 
     parser.add_argument('--img_size', type=int, default=(64, 64)) 
-    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path etl4,etl5,epochs=1000')
+    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path no_background inversed 64x64 etl4,etl5 epochs=1000')
     parser.add_argument('--channels', type=int, default=4)
     parser.add_argument('--emb_dim', type=int, default=320)
     parser.add_argument('--num_heads', type=int, default=4)
@@ -131,8 +131,7 @@ def main():
     parser.add_argument('--interpolation', type=strtobool, default=False)
     parser.add_argument('--mix_rate', type=int, default=1)
     parser.add_argument('--stable_dif_path', type=path_str_type, default='~/datadisk/stable-diffusion-v1-5')
-    parser.add_argument('--models_path', type=path_str_type, default='./datadisk/save_path etl4,etl5 epochs=1000')
-    parser.add_argument('--words', type=list, default=['あ', 'ア'])
+    parser.add_argument('--words', type=list, default=['ぬ', 'モ'])
     
     args = parser.parse_args()
 
@@ -164,14 +163,14 @@ def main():
     # unet = nn.DataParallel(unet, device_ids = [0,1,2,3,4]) #,5,6,7])
     
     optimizer = optim.AdamW(unet.parameters(), lr=0.0001)
-    unet.load_state_dict(torch.load(f'{args.models_path}/models/ckpt.pt'))
-    optimizer.load_state_dict(torch.load(f'{args.models_path}/models/optim.pt'))
+    unet.load_state_dict(torch.load(os.path.join(args.save_path, "models", "ckpt.pt")))
+    optimizer.load_state_dict(torch.load(os.path.join(args.save_path, "models", "optim.pt")))
     
     unet.eval()
     
     ema = EMA(0.995)
     ema_model = copy.deepcopy(unet).eval().requires_grad_(False)
-    ema_model.load_state_dict(torch.load(f'{args.models_path}/models/ema_ckpt.pt'))
+    ema_model.load_state_dict(torch.load(os.path.join(args.save_path, "models", "ema_ckpt.pt")))
     #ema_model = ema_model.to(args.device)
     ema_model.eval()
     
