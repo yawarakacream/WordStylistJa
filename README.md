@@ -8,25 +8,45 @@
 
 ### [etlcdb](http://etlcdb.db.aist.go.jp/?lang=ja)
 
-前処理として，`{etlcdb_path}/{etlcdb_preprocess}.json` に etlcdb のバイナリデータを json 化したものを置いておく．  
-抽出した画像も適当に置いておく（ソースコードを見よ）．
+前処理として，`{etlcdb_path}/ETL{*}.json` に etlcdb のバイナリデータを json 化したものを置いておく．  
+抽出した画像も適当に置いておく．
 
 - `etlcdb_path` etlcdb のパス
 - `etlcdb_names` etlcdb の名前（複数記述可能）
 - `etlcdb_process_type` 前処理の種類
 
-#### 例
+`character.py` に対応する文字を予め書いておく．
+
+#### 例（学習）
 
 入力
 
 ```
---etlcdb_path ./etlcdb_path --etlcdb_process_type original --etlcdb_names ETL4
+python train.py --etlcdb_path ./etlcdb_path --etlcdb_process_type original --etlcdb_names ETL4 ETL5 --save_path ./save_path/original
 ```
 
 のとき
 
-1. `etlcdb_path/ETL4.json` から画像の相対パスを取得
-2. `etlcdb_path/original/{1. で得た相対パス}` の画像を利用
+1. `./etlcdb_path/ETL4.json`, `./etlcdb_path/ETL5.json` から画像の相対パスを取得
+2. `./etlcdb_path/original/{1. で得た相対パス}` の画像を利用
+3. `./save_path/original` 以下に結果を保存
+
+#### 例（サンプリング）
+
+入力
+
+```
+python sampling.py --save_path ./save_path/original --writers ETL4_5001 ETL5_6001 --words "ね" "コ"
+```
+
+のとき
+
+1. `./save_path/original` の結果を利用
+2. ETL4 の 5001 と ETL5 の 6001 が書いたつもりの "ね" と "コ" の画像を生成
+3. `./save_path/original/generated` 以下に保存
+
+ターミナルにマルチバイト文字が書けないことがあるので注意．  
+`writers` は `{save_path}/writer2idx.json` を参照．キーの方を入れる．
 
 ---
 
