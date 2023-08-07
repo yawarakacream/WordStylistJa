@@ -2,7 +2,6 @@ import os
 import copy
 import argparse
 import json
-import random
 
 from distutils.util import strtobool
 
@@ -18,59 +17,9 @@ import cv2
 from PIL import Image
 from diffusers import AutoencoderKL
 
-from train import setup_logging, Diffusion, EMA
 from unet import UNetModel
-
-
-MAX_CHARS = 1
-OUTPUT_MAX_LEN = MAX_CHARS # + 2  # <GO>+groundtruth+<END>
-
-hiraganas = [
-    "あ", "い", "う", "え", "お",
-    "か", "き", "く", "け", "こ",
-    "さ", "し", "す", "せ", "そ",
-    "た", "ち", "つ", "て", "と",
-    "な", "に", "ぬ", "ね", "の",
-    "は", "ひ", "ふ", "へ", "ほ",
-    "ま", "み", "む", "め", "も",
-    "や", "ぃ", "ゆ", "ぇ", "よ",
-    "ら", "り", "る", "れ", "ろ",
-    "わ", "ゐ", "ぅ", "ゑ", "を",
-    "ん",
-]
-
-katakanas = [
-    "ア", "イ", "ウ", "エ", "オ",
-    "カ", "キ", "ク", "ケ", "コ",
-    "サ", "シ", "ス", "セ", "ソ",
-    "タ", "チ", "ツ", "テ", "ト",
-    "ナ", "ニ", "ヌ", "ネ", "ノ",
-    "ハ", "ヒ", "フ", "ヘ", "ホ",
-    "マ", "ミ", "ム", "メ", "モ",
-    "ヤ", "ィ", "ユ", "ェ", "ヨ",
-    "ラ", "リ", "ル", "レ", "ロ",
-    "ワ", "ヰ", "ゥ", "ヱ", "ヲ",
-    "ン",
-]
-
-char_classes = hiraganas + katakanas
-n_char_classes = len(char_classes)
-
-char2index = {c: n for n, c in enumerate(char_classes)}
-index2char = {c: n for n, c in enumerate(char_classes)}
-
-char2code = lambda c: format(ord(c), '#06x')
-code2char = lambda c: chr(int(c, base=16))
-
-tok = False
-if not tok:
-    tokens = {"PAD_TOKEN": n_char_classes}
-else:
-    tokens = {"GO_TOKEN": n_char_classes, "END_TOKEN": n_char_classes + 1, "PAD_TOKEN": n_char_classes + 2}
-del tok
-n_tokens = len(tokens.keys())
-
-vocab_size = n_char_classes + n_tokens
+from character import *
+from train import setup_logging, Diffusion, EMA
 
 
 def crop_whitespace(img):
@@ -121,7 +70,7 @@ def main():
     
     parser.add_argument('--device', type=str, default='cuda:0') 
     parser.add_argument('--img_size', type=int, default=(64, 64)) 
-    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path no_background inversed 64x64 etl4,etl5 epochs=1000')
+    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path/no_background inversed 64x64 etl4,etl5 epochs=1000')
     parser.add_argument('--channels', type=int, default=4)
     parser.add_argument('--emb_dim', type=int, default=320)
     parser.add_argument('--num_heads', type=int, default=4)

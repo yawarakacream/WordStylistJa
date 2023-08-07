@@ -17,56 +17,7 @@ from tqdm import tqdm
 from diffusers import AutoencoderKL
 
 from unet import UNetModel
-
-MAX_CHARS = 1
-OUTPUT_MAX_LEN = MAX_CHARS # + 2  # <GO>+groundtruth+<END>
-
-hiraganas = [
-    "あ", "い", "う", "え", "お",
-    "か", "き", "く", "け", "こ",
-    "さ", "し", "す", "せ", "そ",
-    "た", "ち", "つ", "て", "と",
-    "な", "に", "ぬ", "ね", "の",
-    "は", "ひ", "ふ", "へ", "ほ",
-    "ま", "み", "む", "め", "も",
-    "や", "ぃ", "ゆ", "ぇ", "よ",
-    "ら", "り", "る", "れ", "ろ",
-    "わ", "ゐ", "ぅ", "ゑ", "を",
-    "ん",
-]
-
-katakanas = [
-    "ア", "イ", "ウ", "エ", "オ",
-    "カ", "キ", "ク", "ケ", "コ",
-    "サ", "シ", "ス", "セ", "ソ",
-    "タ", "チ", "ツ", "テ", "ト",
-    "ナ", "ニ", "ヌ", "ネ", "ノ",
-    "ハ", "ヒ", "フ", "ヘ", "ホ",
-    "マ", "ミ", "ム", "メ", "モ",
-    "ヤ", "ィ", "ユ", "ェ", "ヨ",
-    "ラ", "リ", "ル", "レ", "ロ",
-    "ワ", "ヰ", "ゥ", "ヱ", "ヲ",
-    "ン",
-]
-
-char_classes = hiraganas + katakanas
-n_char_classes = len(char_classes)
-
-char2index = {c: n for n, c in enumerate(char_classes)}
-index2char = {c: n for n, c in enumerate(char_classes)}
-
-char2code = lambda c: format(ord(c), '#06x')
-code2char = lambda c: chr(int(c, base=16))
-
-tok = False
-if not tok:
-    tokens = {"PAD_TOKEN": n_char_classes}
-else:
-    tokens = {"GO_TOKEN": n_char_classes, "END_TOKEN": n_char_classes + 1, "PAD_TOKEN": n_char_classes + 2}
-del tok
-n_tokens = len(tokens.keys())
-
-vocab_size = n_char_classes + n_tokens
+from character import *
 
 
 def setup_logging(args):
@@ -78,7 +29,7 @@ def setup_logging(args):
 ### Borrowed from GANwriting ###
 def label_padding(labels, n_tokens):
     new_label_len = []
-    ll = [char2index[i] for i in labels]
+    ll = [char2idx[i] for i in labels]
     new_label_len.append(len(ll) + 2)
     ll = np.array(ll) + n_tokens
     ll = list(ll)
@@ -358,7 +309,7 @@ def main():
     parser.add_argument('--emb_dim', type=int, default=320)
     parser.add_argument('--num_heads', type=int, default=4)
     parser.add_argument('--num_res_blocks', type=int, default=1)
-    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path')
+    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path/0')
     parser.add_argument('--device', type=str, default='cuda:0') 
     parser.add_argument('--latent', type=bool, default=True)
     parser.add_argument('--interpolation', type=bool, default=False)
@@ -388,7 +339,7 @@ def main():
         with open(os.path.join(args.save_path, "writer2idx.json"), "w") as f:
             json.dump(train_ds.writer2idx, f, indent=2)
         
-        tests = [[], []]
+        tests = [[], []] # words, writers
         for etlcdb_name in args.etlcdb_names:
             if etlcdb_name == "ETL4":
                 tests[0] += ["あ", "く", "さ"]
