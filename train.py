@@ -72,6 +72,11 @@ class EtlcdbDataset(Dataset):
                 image_path = os.path.join(etlcdb_path, etlcdb_process_type, relative_image_path)
                 
                 character = item["Character"] # ex) "あ"
+                
+                # 対応していない文字はスルー
+                if character not in char2idx:
+                    continue
+                
                 word = [character]
                 
                 serial_sheet_number = int(item["Serial Sheet Number"]) # ex) 5001
