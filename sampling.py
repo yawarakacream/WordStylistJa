@@ -80,7 +80,7 @@ def main():
     parser.add_argument('--interpolation', type=strtobool, default=False)
     parser.add_argument('--mix_rate', type=int, default=1)
     parser.add_argument('--stable_dif_path', type=path_str_type, default='~/datadisk/stable-diffusion-v1-5')
-    parser.add_argument('--words', type=list, default=['ぬ', 'モ'])
+    parser.add_argument('--words', type=str, nargs="*", default=['ぬ', 'モ'])
     
     args = parser.parse_args()
 
