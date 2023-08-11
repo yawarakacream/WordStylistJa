@@ -20,10 +20,11 @@ from unet import UNetModel
 from character import *
 
 
-def setup_logging(args):
-    os.makedirs(args.save_path, exist_ok=True)
-    os.makedirs(os.path.join(args.save_path, 'models'), exist_ok=True)
-    os.makedirs(os.path.join(args.save_path, 'images'), exist_ok=True)
+def setup_logging(save_path):
+    os.makedirs(save_path, exist_ok=True)
+    os.makedirs(os.path.join(save_path, 'models'), exist_ok=True)
+    os.makedirs(os.path.join(save_path, 'images'), exist_ok=True)
+    os.makedirs(os.path.join(save_path, 'generated'), exist_ok=True)
 
 
 ### Borrowed from GANwriting ###
@@ -86,7 +87,18 @@ class EtlcdbDataset(Dataset):
                     writer_idx += 1
                     self.writer_groups[etlcdb_name].append(writer)
                 
-                self.items.append((image_path, word, writer))
+                # データ拡張した構造
+                if etlcdb_process_type.startswith("+"):
+                    image_dir = image_path[:-len(".png")]
+                    relative_image_paths = list(os.listdir(image_dir))[:2]
+                    relative_image_paths.sort()
+                    for relative_image_path in relative_image_paths:
+                        image_path = os.path.join(image_dir, relative_image_path)
+                        self.items.append((image_path, word, writer))
+                
+                # 素の構造
+                else:
+                    self.items.append((image_path, word, writer))
         
     def __len__(self):
         return len(self.items)
@@ -222,10 +234,17 @@ class Diffusion:
 
 def train(
     diffusion, model, ema, ema_model, vae, optimizer, mse_loss, loader, tests,
-    num_classes, vocab_size, transforms, args
+    num_classes, vocab_size, transforms, args, save_path
 ):
-    checkpoint_epochs = set(range(0, args.epochs, 10 ** (len(str(args.epochs)) - 2)))
+    checkpoint_epochs = set()
+    checkpoint_epochs.add(0)
+    tmp = 10 ** (len(str(args.epochs)) - 2)
+    for i in range(10):
+        if args.epochs < tmp * (i + 1) - 1:
+            break
+        checkpoint_epochs.add(tmp * (i + 1) - 1)
     checkpoint_epochs.add(args.epochs - 1)
+    del tmp
     
     losses = []
     
@@ -281,15 +300,15 @@ def train(
                 ema_sampled_images = diffusion.sampling(ema_model, vae, n=n, x_text=x_text, labels=labels, args=args)
                 sampled_ema = save_images(
                     ema_sampled_images,
-                    os.path.join(args.save_path, 'images', f"{char2code(x_text)}_{epoch}.jpg"),
+                    os.path.join(save_path, 'images', f"{char2code(x_text)}_{epoch + 1}.jpg"),
                     args
                 )
             
-            torch.save(model.state_dict(), os.path.join(args.save_path, "models", "ckpt.pt"))
-            torch.save(ema_model.state_dict(), os.path.join(args.save_path, "models", "ema_ckpt.pt"))
-            torch.save(optimizer.state_dict(), os.path.join(args.save_path, "models", "optim.pt"))
+            torch.save(model.state_dict(), os.path.join(save_path, "models", "ckpt.pt"))
+            torch.save(ema_model.state_dict(), os.path.join(save_path, "models", "ema_ckpt.pt"))
+            torch.save(optimizer.state_dict(), os.path.join(save_path, "models", "optim.pt"))
     
-    with open(os.path.join(args.save_path, "loss.log"), "w") as f:
+    with open(os.path.join(save_path, "loss.log"), "w") as f:
         f.write("\n".join([str(l) for l in losses]))
     
 
@@ -314,7 +333,7 @@ def main():
     parser.add_argument('--emb_dim', type=int, default=320)
     parser.add_argument('--num_heads', type=int, default=4)
     parser.add_argument('--num_res_blocks', type=int, default=1)
-    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path/0')
+    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path')
     parser.add_argument('--device', type=str, default='cuda:0') 
     parser.add_argument('--latent', type=bool, default=True)
     parser.add_argument('--interpolation', type=bool, default=False)
@@ -322,8 +341,13 @@ def main():
 
     args = parser.parse_args()
     
+    save_path = os.path.join(
+        args.save_path,
+        f"{args.etlcdb_process_type} {','.join(args.etlcdb_names)} epochs={args.epochs}"
+    )
+    
     # create save directories
-    setup_logging(args)
+    setup_logging(save_path)
 
     print('num of character classes', n_char_classes)
     print('num of tokens', n_tokens)
@@ -341,7 +365,7 @@ def main():
         
         n_style_classes = len(train_ds.writer2idx)
         
-        with open(os.path.join(args.save_path, "writer2idx.json"), "w") as f:
+        with open(os.path.join(save_path, "writer2idx.json"), "w") as f:
             json.dump(train_ds.writer2idx, f, indent=2)
         
         tests = [[], []] # words, writers
@@ -355,6 +379,9 @@ def main():
     
     else:
         raise Exception("unknown dataset")
+    
+    with open(os.path.join(save_path, "char2idx.json"), "w") as f:
+        json.dump(char2idx, f, indent=2)
     
     print(f"tests: {tests}")
     
@@ -387,7 +414,7 @@ def main():
 
     train(
         diffusion, unet, ema, ema_model, vae, optimizer, mse_loss,
-        train_loader, tests, n_style_classes, vocab_size, transforms, args
+        train_loader, tests, n_style_classes, vocab_size, transforms, args, save_path
     )
 
 
