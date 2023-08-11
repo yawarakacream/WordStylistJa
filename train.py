@@ -90,7 +90,7 @@ class EtlcdbDataset(Dataset):
                 # データ拡張した構造
                 if etlcdb_process_type.startswith("+"):
                     image_dir = image_path[:-len(".png")]
-                    relative_image_paths = list(os.listdir(image_dir))[:2]
+                    relative_image_paths = list(os.listdir(image_dir))
                     relative_image_paths.sort()
                     for relative_image_path in relative_image_paths:
                         image_path = os.path.join(image_dir, relative_image_path)
