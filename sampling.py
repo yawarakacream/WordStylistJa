@@ -70,7 +70,7 @@ def main():
     
     parser.add_argument('--device', type=str, default='cuda:0') 
     parser.add_argument('--img_size', type=int, default=(64, 64)) 
-    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path/no_background inversed 64x64 ETL4,ETL5 epochs=1000')
+    parser.add_argument('--save_path', type=path_str_type, default='./datadisk/save_path/no_background inversed 64x64 ETL4,ETL5')
     parser.add_argument('--channels', type=int, default=4)
     parser.add_argument('--emb_dim', type=int, default=320)
     parser.add_argument('--num_heads', type=int, default=4)

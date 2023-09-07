@@ -343,11 +343,14 @@ def main():
     
     save_path = os.path.join(
         args.save_path,
-        f"{args.etlcdb_process_type} {','.join(args.etlcdb_names)} epochs={args.epochs}"
+        f"{args.etlcdb_process_type} {','.join(args.etlcdb_names)}"
     )
     
     # create save directories
     setup_logging(save_path)
+    
+    with open(os.path.join(save_path, "args.json"), mode="w") as f:
+        json.dump(args.__dict__, f)
 
     print('num of character classes', n_char_classes)
     print('num of tokens', n_tokens)
