@@ -23,18 +23,18 @@
 入力
 
 ```
-python train.py --etlcdb_path ./etlcdb_path --etlcdb_process_type original --etlcdb_names ETL4 ETL5 --save_path ./save_path/original
+python train.py --etlcdb_path ./etlcdb_path --etlcdb_process_type original --etlcdb_names ETL4 ETL5 --save_path ./save_path
 ```
 
 結果
 
 1. `./etlcdb_path/ETL4.json`, `./etlcdb_path/ETL5.json` から画像の相対パスを取得
 2. `./etlcdb_path/original/{1. で得た相対パス}` の画像を利用して学習
-3. `./save_path/original` 以下に保存
+3. `./save_path/original ETL4,ETL5` 以下に保存
 
 ### サンプリング
 
-- `--save_path` 学習時と合わせる
+- `--save_path` 学習時に生成されたディレクトリ
 - `--writers` `{--save_path}/writer2idx.json` を参照（キーの方を入れる）
 - `--words` 出力する文字（マルチバイト文字はターミナルにはうまく打てないかも）
 
@@ -43,14 +43,14 @@ python train.py --etlcdb_path ./etlcdb_path --etlcdb_process_type original --etl
 入力
 
 ```
-python sampling.py --save_path ./save_path/original --writers ETL4_5001 ETL5_6001 --words "ね" "コ"
+python sampling.py --save_path "./save_path/original ETL4,ETL5" --writers ETL4_5001 ETL5_6001 --words "ね" "コ"
 ```
 
 結果
 
-1. `./save_path/original` の結果を利用（学習時と合わせる）
+1. `./save_path/original ETL4,ETL5` の結果を利用（学習時と合わせる）
 2. ETL4 の 5001 番と ETL5 の 6001 番が書いたつもりの "ね" と "コ" の画像を生成
-3. `./save_path/original/generated` 以下に保存
+3. `./save_path/original ETL4,ETL5/generated` 以下に保存
 
 ---
 
